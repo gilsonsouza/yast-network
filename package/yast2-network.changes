@@ -1,4 +1,13 @@
 -------------------------------------------------------------------
+Mon Oct 24 08:10:35 UTC 2016 - mfilka@suse.com
+
+- bnc#927629
+  - improved adding routes. Accepts netmask or prefix length.
+  - fixed column name in add route dialog from Genmask to more
+    common Netmask
+- 3.2.8 
+
+-------------------------------------------------------------------
 Mon Oct 17 08:13:38 UTC 2016 - kanderssen@suse.com
 
 - Bridge handling has been improved (bsc#962824).
