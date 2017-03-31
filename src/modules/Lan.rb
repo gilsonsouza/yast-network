@@ -59,7 +59,6 @@ module Yast
       Yast.import "LanItems"
       Yast.import "ModuleLoading"
       Yast.import "Linuxrc"
-      Yast.import "Report"
 
       Yast.include self, "network/complex.rb"
       Yast.include self, "network/runtime.rb"
@@ -346,6 +345,7 @@ module Yast
       # Progress step 3/9 - multiple devices may be present, really plural
       ProgressNextStage(_("Reading device configuration...")) if @gui
       LanItems.Read
+
       Builtins.sleep(sl)
 
       return false if Abort()
@@ -397,6 +397,8 @@ module Yast
 
       return false if Abort()
       @initialized = true
+
+      fix_dhclient_warning(LanItems.invalid_dhcp_cfgs) if @gui && !LanItems.valid_dhcp_cfg?
 
       Progress.Finish if @gui
 
@@ -726,30 +728,21 @@ module Yast
     # proposal (NetworkManager + ipv6)
     # @return [rich text, links]
     def SummaryGeneral
-      status_nm = nil
-      status_v6 = nil
-      status_virt_net = nil
-      href_nm = nil
-      href_v6 = nil
-      href_virt_net = nil
-      link_nm = nil
-      link_v6 = nil
-      link_virt_net = nil
+      # header for network summary list
       header_nm = _("Network Mode")
 
       if NetworkService.is_network_manager
         href_nm = "lan--nm-disable"
         # network mode: the interfaces are controlled by the user
         status_nm = _("Interfaces controlled by NetworkManager")
-        # disable NetworkManager applet
-        link_nm = Hyperlink(href_nm, _("Disable NetworkManager"))
+        # switch from network manager to wicked
+        link_nm = Hyperlink(href_nm, _("switch to Wicked"))
       else
         href_nm = "lan--nm-enable"
         # network mode
-        status_nm = _("Traditional network setup with NetControl - ifup")
-        # enable NetworkManager applet
-        # for virtual network proposal (bridged) don't show hyperlink to enable networkmanager
-        link_nm = Hyperlink(href_nm, _("Enable NetworkManager"))
+        status_nm = _("Traditional network setup with Wicked")
+        # switch from wicked to network manager
+        link_nm = Hyperlink(href_nm, _("switch to NetworkManager"))
       end
 
       if @ipv6
@@ -757,13 +750,13 @@ module Yast
         # ipv6 support is enabled
         status_v6 = _("Support for IPv6 protocol is enabled")
         # disable ipv6 support
-        link_v6 = Hyperlink(href_v6, _("Disable IPv6"))
+        link_v6 = Hyperlink(href_v6, _("disable"))
       else
         href_v6 = "ipv6-enable"
         # ipv6 support is disabled
         status_v6 = _("Support for IPv6 protocol is disabled")
         # enable ipv6 support
-        link_v6 = Hyperlink(href_v6, _("Enable IPv6"))
+        link_v6 = Hyperlink(href_v6, _("enable"))
       end
       descr = Builtins.sformat(
         "<ul><li>%1: %2 (%3)</li></ul> \n\t\t\t     <ul><li>%4 (%5)</li></ul>",
@@ -773,16 +766,7 @@ module Yast
         status_v6,
         link_v6
       )
-      if !link_virt_net.nil?
-        descr = Builtins.sformat(
-          "%1\n\t\t\t\t\t\t<ul><li>%2 (%3)</li></ul>",
-          descr,
-          status_virt_net,
-          link_virt_net
-        )
-      end
       links = [href_nm, href_v6]
-      links = Builtins.add(links, href_virt_net) if !href_virt_net.nil?
       [descr, links]
     end
 
@@ -986,29 +970,6 @@ module Yast
       end
 
       nil
-    end
-
-    # Create a configuration for autoyast
-    # @return true if something was proposed
-    # Check if any device  is configured with DHCP.
-    # @return true if any DHCP device is configured
-    def AnyDHCPDevice
-      # return true if there is at least one device with dhcp4, dhcp6, dhcp or dhcp+autoip
-      Ops.greater_than(
-        Builtins.size(
-          Builtins.union(
-            Builtins.union(
-              NetworkInterfaces.Locate("BOOTPROTO", "dhcp4"),
-              NetworkInterfaces.Locate("BOOTPROTO", "dhcp6")
-            ),
-            Builtins.union(
-              NetworkInterfaces.Locate("BOOTPROTO", "dhcp"),
-              NetworkInterfaces.Locate("BOOTPROTO", "dhcp+autoip")
-            )
-          )
-        ),
-        0
-      )
     end
 
     # @return [Array] of packages needed when writing the config

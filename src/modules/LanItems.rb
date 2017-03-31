@@ -25,6 +25,7 @@ require "yast"
 require "yaml"
 require "network/install_inf_convertor"
 require "network/wicked"
+require "network/lan_items_summary"
 
 module Yast
   # Does way too many things.
@@ -220,7 +221,7 @@ module Yast
     #
     # @param itemId [Integer] a key for {#Items}
     def GetLanItem(itemId)
-      Ops.get_map(@Items, itemId, {})
+      Items()[itemId] || {}
     end
 
     # Returns configuration for currently modified item.
@@ -413,6 +414,63 @@ module Yast
       udev_key_value(getUdevFallback, key)
     end
 
+    # It deletes the given key from the udev rule of the current item.
+    #
+    # @param key [string] udev key which identifies the tuple to be removed
+    # @return [Object, nil] the current item's udev rule without the given key; nil if
+    # there is not udev rules for the current item
+    def RemoveItemUdev(key)
+      current_rule = LanItems.GetItemUdevRule(LanItems.current)
+
+      return nil if current_rule.empty?
+
+      log.info("Removing #{key} from #{current_rule}")
+      Items()[@current]["udev"]["net"] =
+        LanItems.RemoveKeyFromUdevRule(current_rule, key)
+    end
+
+    # Updates the udev rule of the current Lan Item based on the key given
+    # which currently could be mac or bus_id.
+    #
+    # In case of bus_id the dev_port will be always added to avoid cases where
+    # the interfaces shared the same bus_id (i.e. Multiport cards using the
+    # same function to all the ports) (bsc#1007172)
+    #
+    # @param based_on [Symbol] principal key to be matched, `:mac` or `:bus_id`
+    # @return [void]
+    def update_item_udev_rule!(based_on = :mac)
+      case based_on
+      when :mac
+        LanItems.RemoveItemUdev("ATTR{dev_port}")
+
+        # FIXME: While the user is able to modify the udev rule using the
+        # mac address instead of bus_id when bonding, could be that the
+        # mac in use was not the permanent one. We could read it with
+        # ethtool -P dev_name}
+        LanItems.ReplaceItemUdev(
+          "KERNELS",
+          "ATTR{address}",
+          LanItems.getCurrentItem.fetch("hwinfo", {}).fetch("mac", "")
+        )
+      when :bus_id
+        # Update or insert the dev_port if the sysfs dev_port attribute is present
+        LanItems.ReplaceItemUdev(
+          "ATTR{dev_port}",
+          "ATTR{dev_port}",
+          LanItems.dev_port(LanItems.GetCurrentName)
+        ) if LanItems.dev_port?(LanItems.GetCurrentName)
+
+        # If the current rule is mac based, overwrite to bus id. Don't touch otherwise.
+        LanItems.ReplaceItemUdev(
+          "ATTR{address}",
+          "KERNELS",
+          LanItems.getCurrentItem.fetch("hwinfo", {}).fetch("busid", "")
+        )
+      else
+        raise ArgumentError, "The key given for udev rule #{based_on} is not supported"
+      end
+    end
+
     # It replaces a tuple identified by replace_key in current item's udev rule
     #
     # Note that the tuple is identified by key only. However modification flag is
@@ -431,7 +489,7 @@ module Yast
       # =    for assignment
       # ==   for equality checks
       operator = new_key == "NAME" ? "=" : "=="
-      current_rule = getUdevFallback
+      current_rule = GetItemUdevRule(@current)
       rule = RemoveKeyFromUdevRule(getUdevFallback, replace_key)
 
       # NAME="devname" has to be last in the rule.
@@ -441,12 +499,12 @@ module Yast
       new_rule = AddToUdevRule(rule, "#{new_key}#{operator}\"#{new_val}\"")
       new_rule.push(name_tuple)
 
-      log.info("ReplaceItemUdev: new udev rule = #{new_rule}")
-
       if current_rule.sort != new_rule.sort
         SetModified()
 
-        Items()[@current]["udev"] = { "net" => {} } if !Items()[@current]["udev"]
+        log.info("ReplaceItemUdev: new udev rule = #{new_rule}")
+
+        Items()[@current]["udev"] = { "net" => [] } if !Items()[@current]["udev"]
         Items()[@current]["udev"]["net"] = new_rule
       end
 
@@ -852,12 +910,50 @@ module Yast
     # It means list of item ids of all netcards which are detected and/or
     # configured in the system
     def GetNetcardInterfaces
-      @Items.keys
+      Items().keys
     end
 
     # Creates list of names of all known netcards configured even unconfigured
     def GetNetcardNames
       GetDeviceNames(GetNetcardInterfaces())
+    end
+
+    # Finds all NICs configured with DHCP
+    #
+    # @return [Array<String>] list of NIC names which are configured to use (any) dhcp
+    def find_dhcp_ifaces
+      find_by_sysconfig do |ifcfg|
+        ["dhcp4", "dhcp6", "dhcp", "dhcp+autoip"].include?(ifcfg["BOOTPROTO"])
+      end
+    end
+
+    # Finds all devices which has DHCLIENT_SET_HOSTNAME set to "yes"
+    #
+    # @return [Array<String>] list of NIC names which has the option set to "yes"
+    def find_set_hostname_ifaces
+      find_by_sysconfig do |ifcfg|
+        ifcfg["DHCLIENT_SET_HOSTNAME"] == "yes"
+      end
+    end
+
+    # Creates a list of config files which contain corrupted DHCLIENT_SET_HOSTNAME setup
+    #
+    # @return [Array] list of config file names
+    def invalid_dhcp_cfgs
+      devs = LanItems.find_set_hostname_ifaces
+      dev_ifcfgs = devs.map { |d| "ifcfg-#{d}" }
+
+      return dev_ifcfgs if devs.size > 1
+      return dev_ifcfgs << "dhcp" if !devs.empty? && DNS.dhcp_hostname
+
+      []
+    end
+
+    # Checks if system DHCLIENT_SET_HOSTNAME is valid
+    #
+    # @return [Boolean]
+    def valid_dhcp_cfg?
+      invalid_dhcp_cfgs.empty?
     end
 
     # Get list of all configured interfaces
@@ -1065,9 +1161,9 @@ module Yast
         LanItems.Items[current] = { "ifcfg" => device }
       end
 
-      autoinstall_settings["start_immediately"] = settings.fetch("start_immediately", false)
-      autoinstall_settings["strict_IP_check_timeout"] = settings.fetch("strict_IP_check_timeout", -1)
-      autoinstall_settings["keep_install_network"] = settings.fetch("keep_install_network", true)
+      @autoinstall_settings["start_immediately"] = settings.fetch("start_immediately", false)
+      @autoinstall_settings["strict_IP_check_timeout"] = settings.fetch("strict_IP_check_timeout", -1)
+      @autoinstall_settings["keep_install_network"] = settings.fetch("keep_install_network", true)
 
       # FIXME: createS390Device does two things, it
       # - updates internal structures
@@ -1271,26 +1367,44 @@ module Yast
       [startmode_descr]
     end
 
-    def ip_overview(ip)
+    # Creates a summary of the configured items.
+    #
+    # It supports differents types of summaries depending on the options[:type]
+    #
+    # @see LanItemsSummary
+    # @param options [Hash] summary options
+    # @return [String] summary of the configured items
+    def summary(type = "default")
+      LanItemsSummary.new.send(type)
+    end
+
+    # Creates details for device's overview based on ip configuration type
+    #
+    # Produces list of strings. Strings are intended for "bullet" list, e.g.:
+    # * <string1>
+    # * <string2>
+    #
+    # @param [Hash] dev_map a device's sysconfig map (in form "option" => "value")
+    # @return [Array] list of strings, one string is intended for one "bullet"
+    def ip_overview(dev_map)
       bullets = []
 
-      case ip
-      when "NONE", ""
-      # do nothing
-      when /DHCP/
+      ip = DeviceProtocol(dev_map)
+
+      if ip =~ /DHCP/
         bullets << format("%s %s", _("IP address assigned using"), ip)
-      else
-        prefixlen = NetworkInterfaces.Current["PREFIXLEN"]
-        if prefixlen
+      elsif IP.Check(ip)
+        prefixlen = dev_map["PREFIXLEN"] || ""
+        if !prefixlen.empty?
           bullets << format(_("IP address: %s/%s"), ip, prefixlen)
         else
-          subnetmask = NetworkInterfaces.Current["NETMASK"]
+          subnetmask = dev_map["NETMASK"]
           bullets << format(_("IP address: %s, subnet mask %s"), ip, subnetmask)
         end
       end
 
       # build aliases overview
-      item_aliases = NetworkInterfaces.Current["_aliases"] || {}
+      item_aliases = dev_map["_aliases"] || {}
       if !item_aliases.empty? && !NetworkService.is_network_manager
         item_aliases.each do |_key2, desc|
           parameters = format("%s/%s", desc["IPADDR"], desc["PREFIXLEN"])
@@ -1311,7 +1425,6 @@ module Yast
 
       LanItems.Items.each_key do |key|
         rich = ""
-        ip = _("Not configured")
 
         item_hwinfo = LanItems.Items[key]["hwinfo"] || {}
         descr = item_hwinfo["name"] || ""
@@ -1323,15 +1436,16 @@ module Yast
 
         if !ifcfg_name.empty?
           ifcfg_conf = GetDeviceMap(key)
+          log.error("BuildLanOverview: devmap for #{key}/#{ifcfg_name} is nil") if ifcfg_conf.nil?
+
           ifcfg_desc = ifcfg_conf["NAME"]
           descr = ifcfg_desc if !ifcfg_desc.nil? && !ifcfg_desc.empty?
           descr = CheckEmptyName(ifcfg_type, descr)
-          ip = DeviceProtocol(ifcfg_conf)
           status = DeviceStatus(ifcfg_type, ifcfg_name, ifcfg_conf)
 
           bullets << _("Device Name: %s") % ifcfg_name
           bullets += startmode_overview(key)
-          bullets += ip_overview(ip) if ifcfg_conf["STARTMODE"] != "managed"
+          bullets += ip_overview(ifcfg_conf) if ifcfg_conf["STARTMODE"] != "managed"
 
           if ifcfg_type == "wlan" &&
               ifcfg_conf["WIRELESS_AUTH_MODE"] == "open" &&
@@ -1410,7 +1524,7 @@ module Yast
         end
         LanItems.Items[key]["table_descr"] = {
           "rich_descr"  => rich,
-          "table_descr" => [descr, ip, ifcfg_name, note]
+          "table_descr" => [descr, DeviceProtocol(ifcfg_conf), ifcfg_name, note]
         }
       end
       [Summary.DevicesList(overview), links]
@@ -1533,15 +1647,6 @@ module Yast
           )
         end
       end
-
-      nil
-    end
-
-    # Select the hardware component
-    # @param [Fixnum] which index of the component
-
-    def SelectHW(which)
-      SelectHWMap(FindHardware(@Hardware, which))
 
       nil
     end
@@ -2369,6 +2474,55 @@ module Yast
       udev_rules
     end
 
+    # Configures available devices for obtaining hostname via specified device
+    #
+    # This is related to setting system's hostname via DHCP. Apart of global
+    # DHCLIENT_SET_HOSTNAME which is set in /etc/sysconfig/network/dhcp and is
+    # used as default, one can specify the option even per interface. To avoid
+    # collisions / undeterministic behavior the system should be configured so,
+    # that just one DHCP interface can update the hostname. E.g. global option
+    # can be set to "no" and just only one ifcfg can have the option set to "yes".
+    #
+    # @param [String] device name where should be hostname configuration active
+    # @return [Boolean] false when the configuration cannot be set for a device
+    def conf_set_hostname(device)
+      return false if !find_dhcp_ifaces.include?(device)
+
+      clear_set_hostname
+
+      ret = SetItemSysconfigOpt(find_configured(device), "DHCLIENT_SET_HOSTNAME", "yes")
+
+      SetModified()
+
+      ret
+    end
+
+    # Removes DHCLIENT_SET_HOSTNAME from all ifcfgs
+    #
+    # @return [Array<String>] list of names of cleared devices
+    def clear_set_hostname
+      log.info("Clearing DHCLIENT_SET_HOSTNAME flag from device configs")
+
+      ret = []
+
+      GetNetcardInterfaces().each do |item_id|
+        dev_map = GetDeviceMap(item_id)
+        next if dev_map.nil? || dev_map.empty?
+        next if !dev_map["DHCLIENT_SET_HOSTNAME"]
+
+        dev_map["DHCLIENT_SET_HOSTNAME"] = nil
+
+        SetDeviceMap(item_id, dev_map)
+        SetModified()
+
+        ret << GetDeviceName(item_id)
+      end
+
+      log.info("#{ret.inspect} use default DHCLIENT_SET_HOSTNAME")
+
+      ret
+    end
+
     # This helper allows YARD to extract DSL-defined attributes.
     # Unfortunately YARD has problems with the Capitalized ones,
     # so those must be done manually.
@@ -2596,6 +2750,25 @@ module Yast
       deep_copy(ay)
     end
 
+    # Searches available items according sysconfig option
+    #
+    # Expects a block. The block is provided
+    # with a hash of every item's ifcfg options. Returns
+    # list of device names for whose the block evaluates to true.
+    #
+    # ifcfg hash<string, string> is in form { <sysconfig_key> -> <value> }
+    #
+    # @return [Array] list of device names
+    def find_by_sysconfig
+      items = GetNetcardInterfaces().select do |iface|
+        ifcfg = GetDeviceMap(iface) || {}
+
+        yield(ifcfg)
+      end
+
+      GetDeviceNames(items)
+    end
+
     # @attribute Items
     # @return [Hash<Integer, Hash<String, Object> >]
     # Each item, indexed by an Integer in a Hash, aggregates several aspects
@@ -2704,7 +2877,6 @@ module Yast
     publish function: :isCurrentDHCP, type: "boolean ()"
     publish function: :GetItemDescription, type: "string ()"
     publish function: :SelectHWMap, type: "void (map)"
-    publish function: :SelectHW, type: "void (integer)"
     publish function: :FreeDevices, type: "list (string)"
     publish function: :SetDefaultsForHW, type: "void ()"
     publish function: :SetDeviceVars, type: "void (map, map)"

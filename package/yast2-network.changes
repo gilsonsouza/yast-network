@@ -1,11 +1,135 @@
 -------------------------------------------------------------------
-Mon Oct 24 08:10:35 UTC 2016 - mfilka@suse.com
+Fri Mar 31 10:14:11 UTC 2017 - mfilka@suse.com
 
 - bnc#927629
   - improved adding routes. Accepts netmask or prefix length.
   - fixed column name in add route dialog from Genmask to more
     common Netmask
-- 3.2.8 
+- 3.2.22
+
+-------------------------------------------------------------------
+Tue Mar 21 09:24:29 UTC 2017 - jreidinger@suse.com
+
+- adapt to new version of cfa (new cfa needed for bsc#1023204)
+- 3.2.21
+
+-------------------------------------------------------------------
+Wed Feb 22 10:49:17 UTC 2017 - mfilka@suse.com
+
+- bnc#1020074
+  - when incomplete udev rule is read from the AY profile, it is
+    ignored instead of raising an internal error.
+- 3.2.20
+
+-------------------------------------------------------------------
+Thu Jan 19 15:22:03 UTC 2017 - kanderssen@suse.com
+
+- Added network proposal using the new summary api and the new
+  proposal_client flag 'label_proposal' for CASP special formmating
+  (fate#322328).
+- 3.2.19
+
+-------------------------------------------------------------------
+Wed Jan 18 07:54:01 UTC 2017 - kanderssen@suse.com
+
+- Added summaries for the configured interfaces, particulary an one
+  line summary. (fate#322328)
+
+-------------------------------------------------------------------
+Wed Jan 11 00:56:09 UTC 2017 - kanderssen@suse.com
+
+- Fixed the assignment of udev rules to Lan Items when a previous
+  one does not exist (bsc#996879).
+- 3.2.18
+
+-------------------------------------------------------------------
+Fri Dec  9 09:19:16 UTC 2016 - mfilka@suse.com
+
+- bnc#1013605
+  - Enable DHCP_HOSTNAME listbox only when wicked service is used.
+  - Fixed displaying the "keep current settings" option.
+- 3.2.17
+
+-------------------------------------------------------------------
+Wed Dec  7 07:43:45 UTC 2016 - mfilka@suse.com
+
+- bnc#1013684
+  - do not crash with internal error when setting static setup for
+    newly added device
+- 3.2.16 
+
+-------------------------------------------------------------------
+Wed Nov 30 12:11:44 UTC 2016 - kanderssen@suse.com
+
+- Linuxrc does not export some variables anymore and handles the
+  configuration of network directly, for that reason, some methods
+  or reponsibilities of InstallInfConvertor class are not needed
+  being removed.
+
+-------------------------------------------------------------------
+Wed Nov 30 09:04:58 UTC 2016 - mfilka@suse.com
+
+- bnc#1012764
+  - made rpm architecture independent (noarch)
+- 3.2.15
+
+-------------------------------------------------------------------
+Tue Nov 29 12:41:40 UTC 2016 - mfilka@suse.com
+
+- bnc#1012581
+  - do not crash with internal error stating undefined method when
+    switching to "Hostname / DNS" tab when the system contains
+    incorrect configuration of DHCLIENT_SET_HOSTNAME
+- 3.2.14
+
+-------------------------------------------------------------------
+Mon Nov 28 21:15:00 UTC 2016 - mfilka@suse.com
+
+- bnc#1009931
+  - update item's overview with freshly edited values
+- 3.2.13
+
+-------------------------------------------------------------------
+Wed Nov 23 09:18:33 UTC 2016 - mfilka@suse.com
+
+- bsc#984890
+  - new implementation of setting hostname via DHCP. User is
+    allowed to set hostname via particular interface or set a
+    reasonable default value for all interfaces.
+- bsc#1007172 (kanderssen@suse.com)
+  - When an interface is enslaved in a bond the udev rule is modified
+    using the bus_id instead of the mac address but some multiport
+    cards could use the same bus_id. In such cases also the dev_port
+    is needed. Taking this in account the dev_port will be added
+    always when a udev rule based on bus_id is written.
+- 3.2.12
+
+-------------------------------------------------------------------
+Tue Nov 22 12:30:06 UTC 2016 - igonzalezsosa@suse.com
+
+- Do not crash when removing an entry from the /etc/hosts file
+  (bsc#1010994)
+- 3.2.11
+
+-------------------------------------------------------------------
+Tue Nov 22 11:34:08 UTC 2016 - jreidinger@suse.com
+
+- do not crash when on command line is passed non-number id
+  (bsc#1003908)
+- 3.2.10
+
+-------------------------------------------------------------------
+Thu Oct 27 11:55:10 UTC 2016 - jreidinger@suse.com
+
+- Make network summary consistent with other summaries
+  (bsc#745940)
+- 3.2.9
+
+-------------------------------------------------------------------
+Tue Oct 25 13:25:53 UTC 2016 - mvidner@suse.com
+
+- Fixed a hardcoded interface name in a CLI test (bsc#1006799)
+- 3.2.8
 
 -------------------------------------------------------------------
 Mon Oct 17 08:13:38 UTC 2016 - kanderssen@suse.com
